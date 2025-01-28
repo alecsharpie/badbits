@@ -109,8 +109,10 @@ class PostureAnalyzer:
             
             prompts = {
                 "posture_check": "Looking at the bottom image only: Is the person slouching or sitting with poor posture? Answer with only 'yes' or 'no'.",
-                "nail_biting": "Looking at the bottom image only: Is the person biting their nails or have their hands near their mouth? Answer with only 'yes' or 'no'."
+                "nail_biting": "Looking at the bottom image only: Is the person biting their nails or have their hands near their mouth? Answer with only 'yes' or 'no'.",
+                "posture_details": "Looking at the bottom image only: What specific issues do you see with their posture? List up to 3 main issues, separated by commas. If posture looks good, respond with 'good'."
             }
+            
             results = {}
             for key, prompt in prompts.items():
                 result = self.model.query(encoded_image, prompt)
@@ -221,11 +223,65 @@ class PostureAnalyzer:
         finally:
             self.cap.release()
 
+def download_model(url: str, output_path: Path, chunk_size: int = 8192) -> None:
+    """Download the model file with a progress bar if it doesn't exist."""
+    import requests
+    from tqdm import tqdm
+    import gzip
+    import shutil
+
+    # Create models directory if it doesn't exist
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check if uncompressed model already exists
+    if output_path.exists():
+        logger.info(f"Model already exists at {output_path}")
+        return
+
+    compressed_path = output_path.parent / (output_path.name + '.gz')
+    
+    # Download if compressed file doesn't exist
+    if not compressed_path.exists():
+        logger.info(f"Downloading model from {url}")
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+
+        # Create progress bar
+        progress = tqdm(
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            desc="Downloading model"
+        )
+
+        # Download with progress bar
+        with open(compressed_path, 'wb') as f:
+            for data in response.iter_content(chunk_size):
+                progress.update(len(data))
+                f.write(data)
+        progress.close()
+
+    # Decompress the file
+    if compressed_path.exists():
+        logger.info("Decompressing model file...")
+        with gzip.open(compressed_path, 'rb') as f_in:
+            with open(output_path, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        
+        # Optionally remove the compressed file
+        compressed_path.unlink()
+        logger.info(f"Model ready at {output_path}")
+
 def main():
-    # Path to the model relative to this script
-    MODEL_PATH = "models/moondream-2b-int8.mf"
+    # Model information
+    MODEL_URL = "https://huggingface.co/vikhyatk/moondream2/resolve/9dddae84d54db4ac56fe37817aeaeb502ed083e2/moondream-2b-int8.mf.gz?download=true"
+    MODEL_PATH = Path("models/moondream-2b-int8.mf")
     
     try:
+        # Download model if needed
+        download_model(MODEL_URL, MODEL_PATH)
+        
+        # Initialize analyzer
         analyzer = PostureAnalyzer(MODEL_PATH)
         analyzer.run_continuous_monitoring()
             
