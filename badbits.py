@@ -1963,6 +1963,18 @@ def parse_arguments() -> argparse.Namespace:
         help="Save images and analysis data to disk for tracking progress"
     )
     
+    parser.add_argument(
+        "--habits",
+        type=str,
+        help="Path to a JSON file with custom habit definitions"
+    )
+    
+    parser.add_argument(
+        "--save-habits",
+        type=str,
+        help="Save current habit definitions to a JSON file"
+    )
+    
     # Display options
     display_group = parser.add_argument_group('Display Options')
     
