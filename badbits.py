@@ -1919,23 +1919,28 @@ def parse_arguments() -> argparse.Namespace:
         help="Directory to save analysis results"
     )
     
-    parser.add_argument(
-        "--no-alerts", "-n",
+    # Alert options - simplified
+    alert_group = parser.add_argument_group('Alert Style')
+    
+    alert_style = alert_group.add_mutually_exclusive_group()
+    
+    alert_style.add_argument(
+        "--quiet", "-q",
         action="store_true",
         help="Disable all notifications"
     )
     
-    parser.add_argument(
-        "--alert-methods",
-        type=str,
-        default="desktop,system,browser,sound",
-        help="Comma-separated list of alert methods to use in priority order (desktop,system,browser,dramatic,sound)"
+    alert_style.add_argument(
+        "--normal",
+        action="store_true",
+        default=True,
+        help="Standard desktop notifications (default)"
     )
     
-    parser.add_argument(
-        "--dramatic-alerts",
+    alert_style.add_argument(
+        "--loud", "-l",
         action="store_true",
-        help="Use dramatic full-screen alerts that demand attention"
+        help="Attention-grabbing full-screen alerts"
     )
     
     parser.add_argument(
@@ -1951,34 +1956,53 @@ def parse_arguments() -> argparse.Namespace:
         help="Path to the Moondream model file"
     )
     
-    parser.add_argument(
-        "--quiet", "-q",
-        action="store_true",
-        help="Reduce output verbosity"
-    )
-    
+    # Storage options
     parser.add_argument(
         "--track", "-t",
         action="store_true",
         help="Save images and analysis data to disk for tracking progress"
     )
     
-    parser.add_argument(
+    # Display options
+    display_group = parser.add_argument_group('Display Options')
+    
+    display_style = display_group.add_mutually_exclusive_group()
+    
+    display_style.add_argument(
         "--simple", "-s",
         action="store_true",
-        help="Use simple console output instead of dashboard UI"
+        help="Use simple text output instead of dashboard"
     )
     
-    parser.add_argument(
-        "--habits", "-H",
-        type=str,
-        help="Path to custom habits configuration JSON file"
+    display_style.add_argument(
+        "--dashboard",
+        action="store_true",
+        default=True,
+        help="Show interactive dashboard (default)"
     )
     
-    parser.add_argument(
-        "--save-habits",
-        type=str,
-        help="Export current habits configuration to specified JSON file"
+    # Habit monitoring options - simple focused design
+    habit_group = parser.add_argument_group('What to Monitor')
+    
+    habit_mode = habit_group.add_mutually_exclusive_group()
+    
+    habit_mode.add_argument(
+        "--all", "-a", 
+        action="store_true",
+        default=True,
+        help="Monitor both posture and nail biting (default)"
+    )
+    
+    habit_mode.add_argument(
+        "--posture-only", "-p", 
+        action="store_true",
+        help="Monitor posture only"
+    )
+    
+    habit_mode.add_argument(
+        "--nails-only", "-n", 
+        action="store_true",
+        help="Monitor nail biting only"
     )
     
     return parser.parse_args()
@@ -2050,17 +2074,39 @@ def main() -> None:
                 print("Exiting as requested.")
             return
         
-        # Parse alert methods
-        alert_methods = args.alert_methods.split(',') if args.alert_methods else []
+        # Set which habits to monitor based on command-line options
+        if args.posture_only:
+            # Enable only posture monitoring
+            monitor.enable_habit("posture", True)
+            monitor.enable_habit("nail_biting", False)
+        elif args.nails_only:
+            # Enable only nail biting detection
+            monitor.enable_habit("posture", False)
+            monitor.enable_habit("nail_biting", True)
+        else:
+            # Default: monitor both
+            monitor.enable_habit("posture", True)
+            monitor.enable_habit("nail_biting", True)
+            
+        # All other habits are disabled by default
+        monitor.enable_habit("eye_strain", False)
+        monitor.enable_habit("screen_break", False)
         
-        # If dramatic alerts are requested, ensure 'dramatic' is in the alert methods
-        if args.dramatic_alerts and 'dramatic' not in alert_methods:
-            alert_methods.insert(0, 'dramatic')  # Add dramatic as first priority
+        # Set alert methods based on command-line options
+        if args.loud:
+            # Use dramatic full-screen alerts
+            alert_methods = ['dramatic', 'system', 'desktop', 'sound']
+        elif args.quiet:
+            # Disable notifications
+            alert_methods = []
+        else:
+            # Default to standard notifications
+            alert_methods = ['desktop', 'system', 'sound']
         
         # Start monitoring with selected options
         monitor.run_continuous_monitoring(
             interval_seconds=args.interval,
-            notification_enabled=not args.no_alerts,
+            notification_enabled=not args.quiet,
             archive_mode=args.track,
             dashboard_mode=not args.simple,
             alert_methods=alert_methods

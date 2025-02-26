@@ -1,128 +1,110 @@
 # BadBits
 
-> AI-powered posture coach and habit monitor that protects your health while you work
+> AI-powered posture coach and nail-biting detector
 
-BadBits uses computer vision and AI to help you maintain good posture and break bad habits like nail-biting, providing gentle reminders when you need them most.
+BadBits uses your webcam and AI to help you maintain good posture and break the nail-biting habit. It provides real-time monitoring with a clean dashboard interface and helpful alerts.
 
-## Features
-
-- 🔍 **Smart Detection**: Analyzes your posture and detects nail-biting in real-time
-- 🔒 **Privacy-First**: No data saved to disk by default
-- 🖥️ **Live Dashboard**: Visual feedback on your current habits and improvement over time
-- 🚨 **Smart Alerts**: Comprehensive notification system with desktop, system, browser, and sound alerts
-- 🔄 **Resilient**: Works with multiple camera setups and recovers from disconnections
-
-## Quick Start
+## Quick Setup
 
 ```bash
 # Install dependencies
 pip install -e .
 
-# For macOS users, to enable desktop notifications
-pip install pyobjus
-
-# Run with recommended settings
-python badbits.py
-
-# Run with data tracking (saves images)
-python badbits.py --track
-
-# Run with specific alert methods
-python badbits.py --alert-methods=system,browser,sound
-```
-
-## Usage Modes
-
-BadBits has two main modes:
-
-### 1. Privacy Mode (Default)
-- No images saved to disk
-- Real-time monitoring and alerts
-- Dashboard interface
-
-```bash
+# Run with default settings (monitors both posture and nail-biting)
 python badbits.py
 ```
 
-### 2. Tracking Mode
-- Saves reference and comparison images
-- Tracks progress over time
-- Useful for analyzing patterns
+## Common Commands
+
+BadBits is designed to be simple with sensible defaults. Here are the most common ways to use it:
 
 ```bash
+# Monitor both posture and nail-biting (default)
+python badbits.py
+
+# Monitor posture only
+python badbits.py --posture-only
+
+# Monitor nail-biting only
+python badbits.py --nails-only
+
+# Use attention-grabbing alerts (for breaking stubborn habits)
+python badbits.py --loud
+
+# Run silently (dashboard only, no alerts)
+python badbits.py --quiet
+
+# Save progress data for review
 python badbits.py --track
 ```
+
+## Features
+
+- **Focused Monitoring**: Tracks posture and nail-biting habits
+- **Clean Dashboard**: Real-time visualization of your habits
+- **Smart Alerts**: Notifications when issues are detected
+- **Privacy-First**: No images saved to disk by default
+- **Progress Tracking**: Optional data saving for reviewing improvement
 
 ## Command Options
+
+BadBits has a simplified command interface focused on the essentials:
+
+### What to Monitor
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--all` | `-a` | Monitor both posture and nail-biting | ✓ |
+| `--posture-only` | `-p` | Monitor posture only | |
+| `--nails-only` | `-n` | Monitor nail-biting only | |
+
+### Alert Style
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--normal` | | Standard desktop notifications | ✓ |
+| `--quiet` | `-q` | Disable all notifications | |
+| `--loud` | `-l` | Attention-grabbing full-screen alerts | |
+
+### Display Options
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--dashboard` | | Show interactive dashboard | ✓ |
+| `--simple` | `-s` | Use simple text output | |
+
+### Other Options
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
 | `--interval` | `-i` | Seconds between checks | 60 |
-| `--camera` | `-c` | Primary camera ID | 0 |
-| `--backup-cameras` | | Fallback cameras (comma-separated) | None |
-| `--track` | `-t` | Save images and analysis data | False |
-| `--quiet` | `-q` | Reduce console output | False |
-| `--no-alerts` | `-n` | Disable all notifications | False |
-| `--alert-methods` | | Notification types in priority order | desktop,system,browser,sound |
-| `--dramatic-alerts` | | Use attention-demanding full-screen alerts | False |
-| `--simple` | `-s` | Use simple console output (no dashboard) | False |
-| `--download-only` | `-d` | Just download the model | False |
+| `--camera` | `-c` | Camera device ID | 0 |
+| `--track` | `-t` | Save data for progress tracking | |
+| `--backup-cameras` | | Fallback cameras (comma-separated) | |
 
-## Notification System
+## Platform Notes
 
-BadBits features a comprehensive notification system with multiple fallback methods:
-
-1. **Desktop Notifications**: Native OS notifications (requires pyobjus on macOS)
-2. **System Alerts**: OS-specific alerts using:
-   - macOS: AppleScript or terminal-notifier
-   - Linux: notify-send or zenity
-   - Windows: PowerShell or msg command
-3. **Browser Notifications**: Popup alerts in a browser window
-4. **Dramatic Alerts**: Full-screen attention-demanding notifications that must be acknowledged
-5. **Sound Alerts**: Audio cues for immediate attention
-
-Customize using the `--alert-methods` option:
-
+### macOS
+For better desktop notifications on macOS:
 ```bash
-# Prioritize system alerts over desktop notifications
-python badbits.py --alert-methods=system,desktop,sound,browser
-
-# Only use browser notifications and sounds
-python badbits.py --alert-methods=browser,sound
-
-# Use dramatic full-screen alerts that demand attention
-python badbits.py --dramatic-alerts
-
-# Specify dramatic alerts in priority chain
-python badbits.py --alert-methods=dramatic,desktop,sound
+pip install pyobjus
 ```
 
-### Platform-Specific Setup
-
-**macOS**:
-- For desktop notifications: `pip install pyobjus`
-- For terminal alerts: `brew install terminal-notifier`
-
-**Linux**:
-- For desktop notifications: Ensure you have notify-send or zenity installed
-  ```bash
-  sudo apt-get install libnotify-bin zenity
-  ```
-
-**Windows**:
-- No additional setup required
+### All Platforms
+BadBits works on Windows, macOS, and Linux with no additional configuration required.
 
 ## How It Works
 
-1. You capture a reference image of your ideal posture
-2. BadBits monitors your posture and hand position at regular intervals
-3. When issues are detected, you receive notifications through multiple channels
-4. The dashboard shows your improvement over time
+1. **Reference Image**: First, you capture a reference image of your ideal posture
+2. **Continuous Monitoring**: BadBits regularly checks your posture and hand position
+3. **Smart Detection**: AI compares current posture with reference image
+4. **Helpful Feedback**: Notifications alert you when issues are detected
+5. **Progress Visualization**: Dashboard shows improvement over time
 
 ## Development
 
 ```bash
-# Install dev dependencies
+# Install development dependencies
 pip install -e ".[dev]"
 
 # Type checking
