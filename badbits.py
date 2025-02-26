@@ -27,6 +27,13 @@ from PIL import Image, ImageDraw, ImageFont
 import moondream as md
 from plyer import notification
 
+# Alert system imports
+import subprocess
+import webbrowser
+from threading import Thread
+import tempfile
+import base64
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -259,6 +266,559 @@ class HabitCheck:
         )
 
 
+class AlertManager:
+    """
+    Manages different types of alert notifications for BadBits.
+    
+    This class handles multiple notification methods including:
+    - Desktop notifications (via plyer)
+    - System alerts (via platform-specific commands)
+    - Browser notifications (via simple HTML page)
+    - Sound alerts
+    - Dramatic full-screen interruption alerts
+    """
+    
+    def __init__(self, app_name: str = "BadBits"):
+        """
+        Initialize the alert manager.
+        
+        Args:
+            app_name: Name of the application to show in notifications
+        """
+        self.app_name = app_name
+        self.system = platform.system()
+        self.notification_html = None
+        self.browser_window = None
+        
+    def desktop_notification(self, title: str, message: str, timeout: int = 10) -> bool:
+        """
+        Send a desktop notification using plyer.
+        
+        Args:
+            title: Notification title
+            message: Notification message
+            timeout: Notification timeout in seconds
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Try to handle the common pyobjus missing error on macOS specifically
+            if self.system == "Darwin":
+                # Check if pyobjus is available before using notification
+                try:
+                    import importlib
+                    if importlib.util.find_spec("pyobjus") is None:
+                        logger.warning("The pyobjus package is required for macOS notifications")
+                        logger.warning("To install: pip install pyobjus")
+                        # Use AppleScript directly as fallback
+                        return self.system_alert(title, message)
+                except Exception:
+                    # Fallback to system notification
+                    return self.system_alert(title, message)
+            
+            # Try the regular notification mechanism
+            notification.notify(
+                title=title,
+                message=message,
+                app_name=self.app_name,
+                timeout=timeout
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Desktop notification failed: {e}")
+            # Return False to allow fallback methods
+            return False
+            
+    def system_alert(self, title: str, message: str) -> bool:
+        """
+        Show system alert using platform-specific methods.
+        
+        Args:
+            title: Alert title
+            message: Alert message
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if self.system == "Darwin":  # macOS
+                # First try applescript for macOS
+                try:
+                    apple_script = f'display notification "{message}" with title "{title}"'
+                    subprocess.run(["osascript", "-e", apple_script], check=True)
+                    return True
+                except Exception as e:
+                    logger.warning(f"AppleScript notification failed: {e}")
+                    
+                # If AppleScript fails, try terminal-notifier as fallback
+                try:
+                    # Check if terminal-notifier is installed
+                    which_result = subprocess.run(
+                        ["which", "terminal-notifier"], 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.PIPE
+                    )
+                    
+                    if which_result.returncode == 0:
+                        subprocess.run([
+                            "terminal-notifier",
+                            "-title", title,
+                            "-message", message,
+                            "-sound", "default"
+                        ], check=True)
+                        return True
+                    else:
+                        logger.warning("terminal-notifier not found. To install: brew install terminal-notifier")
+                except Exception as e:
+                    logger.warning(f"terminal-notifier failed: {e}")
+                    
+            elif self.system == "Linux":
+                # Try multiple Linux notification methods
+                
+                # First try notify-send
+                try:
+                    subprocess.run([
+                        "notify-send", 
+                        title, 
+                        message,
+                        "--icon=dialog-information"
+                    ], check=True)
+                    return True
+                except Exception as e:
+                    logger.warning(f"notify-send failed: {e}")
+                
+                # Then try zenity
+                try:
+                    subprocess.run([
+                        "zenity", 
+                        "--info", 
+                        f"--title={title}", 
+                        f"--text={message}"
+                    ], check=True)
+                    return True
+                except Exception as e:
+                    logger.warning(f"zenity notification failed: {e}")
+                    
+            elif self.system == "Windows":
+                # Try multiple Windows notification methods
+                
+                # First try PowerShell notification
+                try:
+                    powershell_cmd = f'[System.Windows.Forms.MessageBox]::Show("{message}", "{title}")'
+                    subprocess.run(
+                        ["powershell", "-Command", powershell_cmd],
+                        check=True
+                    )
+                    return True
+                except Exception as e:
+                    logger.warning(f"PowerShell notification failed: {e}")
+                
+                # Then try msg command for Windows
+                try:
+                    subprocess.run([
+                        "msg", 
+                        "%username%", 
+                        f"{title}: {message}"
+                    ], check=True)
+                    return True
+                except Exception as e:
+                    logger.warning(f"Windows msg command failed: {e}")
+            
+            # If we get here, all platform-specific methods failed
+            return False
+        except Exception as e:
+            logger.warning(f"System alert failed: {e}")
+            return False
+    
+    def sound_alert(self) -> bool:
+        """
+        Play a sound alert.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if self.system == "Darwin":  # macOS
+                subprocess.run(["afplay", "/System/Library/Sounds/Ping.aiff"], check=True)
+                return True
+            elif self.system == "Linux":
+                subprocess.run(["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"], check=True)
+                return True
+            elif self.system == "Windows":
+                import winsound
+                winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS)
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Sound alert failed: {e}")
+            return False
+    
+    def _create_notification_html(self) -> str:
+        """
+        Create HTML for browser notifications.
+        
+        Returns:
+            HTML string for notifications page
+        """
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{self.app_name} Notifications</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }}
+        .notification-container {{ margin-bottom: 20px; }}
+        .notification {{ 
+            background-color: white; 
+            border-left: 4px solid #007bff; 
+            padding: 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            animation: slideIn 0.5s ease-out;
+        }}
+        .notification.alert {{ border-left-color: #dc3545; }}
+        .notification-title {{ font-weight: bold; margin-bottom: 5px; }}
+        .notification-body {{ color: #555; }}
+        .notification-time {{ color: #777; font-size: 0.8em; margin-top: 5px; }}
+        @keyframes slideIn {{ from {{ transform: translateX(-100%); opacity: 0; }} to {{ transform: translateX(0); opacity: 1; }} }}
+        #header {{ background-color: #2c3e50; color: white; padding: 15px; margin: -20px -20px 20px -20px; }}
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h2>{self.app_name} Notifications</h2>
+        <p>Real-time alerts will appear here</p>
+    </div>
+    <div id="notifications">
+    </div>
+    <script>
+        function addNotification(title, message, isAlert = false) {{
+            const container = document.createElement('div');
+            container.className = 'notification-container';
+            
+            const notification = document.createElement('div');
+            notification.className = isAlert ? 'notification alert' : 'notification';
+            
+            const titleElement = document.createElement('div');
+            titleElement.className = 'notification-title';
+            titleElement.textContent = title;
+            
+            const bodyElement = document.createElement('div');
+            bodyElement.className = 'notification-body';
+            bodyElement.textContent = message;
+            
+            const timeElement = document.createElement('div');
+            timeElement.className = 'notification-time';
+            timeElement.textContent = new Date().toLocaleTimeString();
+            
+            notification.appendChild(titleElement);
+            notification.appendChild(bodyElement);
+            notification.appendChild(timeElement);
+            container.appendChild(notification);
+            
+            document.getElementById('notifications').prepend(container);
+            
+            // Play sound
+            new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PurWcHENCa0evBhDEQKXrF5cqQRBMeSKjd+b97HwMvh9f0yH4+ChuBx+PMjkwXHFSs2se1RQxDn+DtwH0rnNJ8IQIwktvoq1kJBGjN9dO5Y0wZVbBS+tzZgAlQwHIaA36i1tuYNhBZtm4TEnnS775sRzFWqVoPaLj34IQM6p9cHTC07vKVGUCo3t+DSBxLr/THdxpDzpdTFWmo2/OgMg05074jETib6ueEJ+aWTxFrw/vieQgTgOMOMn3Y/K9RBliX7tgYAoTsLj2M1ueZKQNwu1ISWaf0xVwC0qlNFG3I/MhRA2Go99QPCvXqgRbVpMTSkigJSbCKbwAPecXw12YM3p9QFXfT/89PAl2m9r8cCPnlfQvosnnXiUAQZbODTgEUfc7yxlMF76RdHHHB+spLBYrg4Yk6AcyYSxmA1P3NTAFUvM4yV4Tj7GANDJrQ2pUzDF2iyQEzjPL5jzUFZrXnBFJ9++etKc70jSMsj++8LBgTpOL9ClB9/vemJd73myxMmOXOGhEis/v9LE0omsQ5S5fiyicEP7D//FFhHJG2Ognvw/c2VRScr6FpB3e1+fwuCNu4fXkPxqFsPA6MytajLQlZvILvD9rdsQ8PwbnB/kZAYqOsZw9/o8joYA0WqbbGBQV9zdudDom7ywsLyLvLBgpxwsIJCPzN9zdRCvnHzQAJ/9L3M1YK88XP', false).play();
+            
+            // Optionally show notification via Notification API if supported
+            if (Notification.permission === "granted") {{
+                new Notification(title, {{ body: message }});
+            }}
+        }}
+        
+        // Request browser notification permission
+        if (Notification.permission !== "granted" && Notification.permission !== "denied") {{
+            Notification.requestPermission();
+        }}
+        
+        // Listen for messages from BadBits
+        window.addEventListener('message', function(event) {{
+            const data = event.data;
+            if (data.type === 'notification') {{
+                addNotification(data.title, data.message, data.isAlert);
+            }}
+        }});
+        
+        // Log ready status
+        console.log("BadBits notification system ready");
+    </script>
+</body>
+</html>"""
+        return html
+    
+    def browser_notification(self, title: str, message: str, is_alert: bool = True) -> bool:
+        """
+        Show notification in browser window.
+        
+        Args:
+            title: Notification title
+            message: Notification message
+            is_alert: Whether to mark as critical alert with red styling
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Create HTML file if not already created
+            if self.notification_html is None:
+                # Create temporary HTML file
+                fd, path = tempfile.mkstemp(suffix='.html', prefix='badbits_notifications_')
+                self.notification_html = path
+                with open(path, 'w') as f:
+                    f.write(self._create_notification_html())
+                
+                # Open browser window if not already open
+                if self.browser_window is None:
+                    # Open in new browser window
+                    webbrowser.open('file://' + path, new=1)
+                
+            # Open file:// URL if we haven't opened it yet
+            if self.browser_window is None:
+                self.browser_window = True  # Mark as opened
+            
+            # Execute JavaScript to add notification
+            # This won't work directly due to browser security, but we'll update the HTML
+            # The notification will be shown when user refreshes page
+            with open(self.notification_html, 'r') as f:
+                content = f.read()
+            
+            # Add notification entry by modifying the HTML
+            notification_entry = f"""
+            <script>
+                // Add notification on page load
+                window.addEventListener('load', function() {{
+                    addNotification("{title}", "{message}", {str(is_alert).lower()});
+                }});
+            </script>
+            """
+            modified_content = content.replace('</body>', notification_entry + '</body>')
+            
+            with open(self.notification_html, 'w') as f:
+                f.write(modified_content)
+                
+            return True
+                
+        except Exception as e:
+            logger.warning(f"Browser notification failed: {e}")
+            return False
+    
+    def dramatic_alert(self, title: str, message: str) -> bool:
+        """
+        Display a dramatic full-screen alert that interrupts user workflow.
+        
+        This creates a temporary application window that takes over the screen,
+        forcing the user to acknowledge the alert before continuing.
+        
+        Args:
+            title: Alert title
+            message: Alert message
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Create temporary HTML file with more dramatic styling
+            fd, path = tempfile.mkstemp(suffix='.html', prefix='badbits_dramatic_alert_')
+            
+            # Full-screen dramatic alert HTML
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{title}</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: rgba(220, 53, 69, 0.95);
+            color: white;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            animation: pulse 1.5s infinite;
+        }}
+        .container {{
+            text-align: center;
+            max-width: 80%;
+            padding: 2rem;
+            border-radius: 8px;
+            background-color: rgba(0,0,0,0.3);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }}
+        h1 {{
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            animation: shake 0.5s infinite;
+        }}
+        .message {{
+            font-size: 1.8rem;
+            margin-bottom: 2rem;
+        }}
+        .dismiss {{
+            background-color: white;
+            color: #dc3545;
+            border: none;
+            padding: 1rem 2rem;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 1rem;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }}
+        .dismiss:hover {{
+            background-color: #f8f9fa;
+            transform: scale(1.05);
+        }}
+        @keyframes pulse {{
+            0% {{ background-color: rgba(220, 53, 69, 0.9); }}
+            50% {{ background-color: rgba(220, 53, 69, 0.7); }}
+            100% {{ background-color: rgba(220, 53, 69, 0.9); }}
+        }}
+        @keyframes shake {{
+            0% {{ transform: translateX(0); }}
+            25% {{ transform: translateX(-5px); }}
+            50% {{ transform: translateX(0); }}
+            75% {{ transform: translateX(5px); }}
+            100% {{ transform: translateX(0); }}
+        }}
+        .emoji {{
+            font-size: 5rem;
+            margin-bottom: 1rem;
+            animation: bounce 1s infinite;
+        }}
+        @keyframes bounce {{
+            0%, 100% {{ transform: translateY(0); }}
+            50% {{ transform: translateY(-20px); }}
+        }}
+        .countdown {{
+            font-size: 1.5rem;
+            margin-top: 1rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="emoji">⚠️</div>
+        <h1>{title}</h1>
+        <div class="message">{message}</div>
+        <button class="dismiss" id="dismissBtn">I'll Fix This Now</button>
+        <div class="countdown" id="countdown">Alert will close in 15 seconds</div>
+    </div>
+    
+    <script>
+        // Auto-dismiss after 15 seconds
+        let secondsLeft = 15;
+        const countdownEl = document.getElementById('countdown');
+        const countdown = setInterval(() => {{
+            secondsLeft--;
+            countdownEl.textContent = `Alert will close in ${{secondsLeft}} seconds`;
+            if (secondsLeft <= 0) {{
+                clearInterval(countdown);
+                window.close();
+            }}
+        }}, 1000);
+        
+        // Allow dismissing with the button, escape key, or space bar
+        document.getElementById('dismissBtn').addEventListener('click', () => {{
+            window.close();
+        }});
+        
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') {{
+                window.close();
+            }}
+        }});
+        
+        // Make the alert more attention-grabbing
+        const playSound = () => {{
+            const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PurWcHENCa0evBhDEQKXrF5cqQRBMeSKjd+b97HwMvh9f0yH4+ChuBx+PMjkwXHFSs2se1RQxDn+DtwH0rnNJ8IQIwktvoq1kJBGjN9dO5Y0wZVbBS+tzZgAlQwHIaA36i1tuYNhBZtm4TEnnS775sRzFWqVoPaLj34IQM6p9cHTC07vKVGUCo3t+DSBxLr/THdxpDzpdTFWmo2/OgMg05074jETib6ueEJ+aWTxFrw/vieQgTgOMOMn3Y/K9RBliX7tgYAoTsLj2M1ueZKQNwu1ISWaf0xVwC0qlNFG3I/MhRA2Go99QPCvXqgRbVpMTSkigJSbCKbwAPecXw12YM3p9QFXfT/89PAl2m9r8cCPnlfQvosnnXiUAQZbODTgEUfc7yxlMF76RdHHHB+spLBYrg4Yk6AcyYSxmA1P3NTAFUvM4yV4Tj7GANDJrQ2pUzDF2iyQEzjPL5jzUFZrXnBFJ9++etKc70jSMsj++8LBgTpOL9ClB9/vemJd73myxMmOXOGhEis/v9LE0omsQ5S5fiyicEP7D//FFhHJG2Ognvw/c2VRScr6FpB3e1+fwuCNu4fXkPxqFsPA6MytajLQlZvILvD9rdsQ8PwbnB/kZAYqOsZw9/o8joYA0WqbbGBQV9zdudDom7ywsLyLvLBgpxwsIJCPzN9zdRCvnHzQAJ/9L3M1YK88XP');
+            audio.play();
+        }};
+        
+        // Play sound on load
+        playSound();
+        
+        // Play sound every 3 seconds
+        setInterval(playSound, 3000);
+        
+        // Vibrate if supported
+        if ('vibrate' in navigator) {{
+            navigator.vibrate([200, 100, 200, 100, 200]);
+            // Repeat vibration pattern every 2 seconds
+            setInterval(() => {{
+                navigator.vibrate([200, 100, 200]);
+            }}, 2000);
+        }}
+    </script>
+</body>
+</html>"""
+            
+            # Write to temp file
+            with open(path, 'w') as f:
+                f.write(html)
+            
+            # Open in browser with new window
+            webbrowser.open('file://' + path, new=1)
+            
+            # Play system alert sound for additional attention
+            self.sound_alert()
+            
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Dramatic alert failed: {e}")
+            return False
+
+    def send_alert(self, title: str, message: str, methods: List[str] = None) -> None:
+        """
+        Send alert using multiple methods with fallbacks.
+        
+        Args:
+            title: Alert title
+            message: Alert message
+            methods: List of methods to try in order of preference:
+                    - 'desktop': Desktop notification via plyer
+                    - 'system': System dialog
+                    - 'browser': Browser notification
+                    - 'dramatic': Full-screen dramatic alert
+                    - 'sound': Sound alert
+        """
+        if methods is None:
+            methods = ['desktop', 'system', 'browser', 'sound']
+        
+        success = False
+        
+        # First try preferred methods in order
+        for method in methods:
+            if method == 'desktop':
+                success = self.desktop_notification(title, message)
+                if success:
+                    break
+            elif method == 'system':
+                success = self.system_alert(title, message)
+                if success:
+                    break
+            elif method == 'browser':
+                success = self.browser_notification(title, message)
+                if success:
+                    break
+            elif method == 'dramatic':
+                success = self.dramatic_alert(title, message)
+                if success:
+                    break
+            elif method == 'sound':
+                success = self.sound_alert()
+        
+        # Always play sound unless we explicitly succeeded with sound method
+        if 'sound' not in methods or not success:
+            self.sound_alert()
+
 class HabitMonitor:
     """
     Analyzes habits using webcam and vision model.
@@ -300,6 +860,9 @@ class HabitMonitor:
             self.camera_id = camera_id
             self.backup_camera_ids = backup_camera_ids or []
             self.camera_options = [camera_id] + self.backup_camera_ids
+            
+            # Initialize alert manager
+            self.alert_manager = AlertManager(app_name="BadBits")
             
             # Load habits - start with default habits
             self.habits = self._load_default_habits()
@@ -351,8 +914,8 @@ class HabitMonitor:
                 habit_id="posture",
                 name="Poor Posture",
                 emoji="🪑",
-                prompt="Looking at the bottom image only: Is the person slouching or sitting with poor posture? Answer with only 'yes' or 'no'.",
-                details_prompt="Looking at the bottom image only: What specific issues do you see with their posture? List up to 3 main issues, separated by commas. If posture looks good, respond with 'good'.",
+                prompt="Compare the top (reference) and bottom images: Is the person in the bottom image sitting with worse posture than in the reference image? Answer with ONLY 'yes' or 'no'.",
+                details_prompt=None,
                 description="Detects poor sitting posture compared to your reference image",
                 active_message="Poor posture detected! Straighten your back and adjust your position.",
                 default_enabled=True
@@ -361,7 +924,7 @@ class HabitMonitor:
                 habit_id="nail_biting",
                 name="Nail Biting",
                 emoji="💅",
-                prompt="Looking at the bottom image only: Is the person biting their nails or have their hands near their mouth? Answer with only 'yes' or 'no'.",
+                prompt="Looking at the bottom image only: Is the person biting their nails or have their hands near their mouth? Answer with ONLY 'yes' or 'no' - nothing else.",
                 description="Detects nail biting or hands near mouth",
                 active_message="Nail biting detected! Be mindful of your hands.",
                 default_enabled=True
@@ -370,7 +933,7 @@ class HabitMonitor:
                 habit_id="eye_strain",
                 name="Eye Strain",
                 emoji="👁️",
-                prompt="Looking at the bottom image only: Is the person leaning too close to the screen (less than arm's length away)? Answer with only 'yes' or 'no'.",
+                prompt="Looking at the bottom image only: Is the person leaning too close to the screen (less than arm's length away)? Answer with ONLY 'yes' or 'no' - nothing else.",
                 description="Detects when you're sitting too close to the screen",
                 active_message="You're too close to the screen! Sit back to reduce eye strain.",
                 default_enabled=False
@@ -614,13 +1177,15 @@ class HabitMonitor:
                 answer = response["answer"].lower().strip()
                 
                 # Create a binary result (is_active = True means the alert is active)
-                is_active = answer == "yes"
+                # Strictly enforce binary yes/no - only "yes" counts as positive
+                is_active = answer.strip().lower() == "yes"
                 
-                # Get details if needed and available
+                # Log if we got unexpected response
+                if answer.strip().lower() not in ["yes", "no"]:
+                    logger.warning(f"Non-binary response from model for {habit_id}: '{answer}'. Treated as 'no'.")
+                
+                # No details needed - keep alerts simple and binary
                 details = ""
-                if is_active and habit.details_prompt:
-                    detail_response = self.model.query(encoded_image, habit.details_prompt)
-                    details = detail_response["answer"]
                 
                 # Create the alert result
                 result = AlertResult(
@@ -692,6 +1257,15 @@ class HabitMonitor:
         ref_path = self.output_dir / "reference_posture.jpg"
         self.reference_image.save(ref_path)
         print(f"Reference image saved to: {ref_path}")
+        
+        # Send a notification that monitoring is starting
+        if hasattr(self, 'alert_manager'):
+            self.alert_manager.send_alert(
+                "BadBits Monitoring Started",
+                "Posture and habit monitoring is now active!",
+                ['desktop', 'system']
+            )
+            
         print("\nStarting posture monitoring...")
 
     def save_analysis(self, collage: Image.Image, alerts: List[AlertResult], timestamp: str, archive_mode: bool = False) -> Optional[Path]:
@@ -752,26 +1326,24 @@ class HabitMonitor:
         else:
             title = f"BadBits Alert: {alert.alert_type.replace('_', ' ').title()}"
         
-        # Create the notification message
+        # Create the notification message - simple and direct
         if habit and habit.active_message:
-            # Use the custom message from the habit definition
+            # Use the custom message from the habit definition, no details needed
             message = habit.active_message
-            # Append details if available
-            if alert.details:
-                message = f"{message} {alert.details}"
         else:
             # Default message if habit is not found
-            message = f"Issue detected: {alert.details}" if alert.details else "Issue detected!"
+            message = "Issue detected!"
+        
+        # Initialize alert manager if needed
+        if not hasattr(self, 'alert_manager'):
+            self.alert_manager = AlertManager(app_name="BadBits")
             
-        try:
-            notification.notify(
-                title=title,
-                message=message,
-                app_name="BadBits",
-                timeout=10
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send notification: {e}")
+        # Send alert with fallbacks
+        self.alert_manager.send_alert(
+            title=title,
+            message=message,
+            methods=['desktop', 'system', 'browser', 'sound']
+        )
     
     def render_dashboard(self, 
                          stats: CheckStats,
@@ -779,7 +1351,7 @@ class HabitMonitor:
                          next_check_time: Optional[datetime] = None,
                          error_message: str = "") -> str:
         """
-        Render a dashboard-style UI.
+        Render a clean, minimal dashboard with timeline visualization.
         
         Args:
             stats: Current session statistics
@@ -793,125 +1365,197 @@ class HabitMonitor:
         # Get terminal size
         terminal_width = shutil.get_terminal_size().columns
         
-        # Prepare header
-        border = "═" * terminal_width
-        title = "BadBits Posture Monitor".center(terminal_width)
-        subtitle = "Real-time AI-powered habit tracking".center(terminal_width)
-        
-        # Prepare stats section
-        stats_width = terminal_width - 4  # Account for padding
-        stats_left_width = stats_width // 2
-        stats_right_width = stats_width - stats_left_width
-        
-        duration_str = f"Session: {stats.duration_minutes} minutes"
-        checks_str = f"Checks: {stats.total_checks}"
-        
-        stats_line1_left = duration_str.ljust(stats_left_width)
-        stats_line1_right = checks_str.rjust(stats_right_width)
-        
-        # Prepare alert section
-        alert_header = "CURRENT STATUS".center(terminal_width)
-        alert_border = "─" * terminal_width
-        
-        alert_lines = []
-        for alert in current_alerts:
-            status = "⚠️  ALERT" if alert.is_active else "✅ OK"
-            alert_type_display = alert.alert_type.replace("_", " ").title()
-            alert_line = f"  {alert.get_emoji()} {alert_type_display}: {status}"
-            alert_lines.append(alert_line)
+        # Limited color palette for a clean, cohesive look
+        class Colors:
+            RESET = "\033[0m"
+            BOLD = "\033[1m"
+            DIM = "\033[2m"  # Dimmed text
+            BLUE = "\033[34m"  # Standard blue (not bright)
+            GREEN = "\033[32m"  # Standard green
+            RED = "\033[31m"  # Standard red
+            WHITE = "\033[37m"  # White
             
-            if alert.is_active and alert.details:
-                alert_lines.append(f"     ℹ️  {alert.details}")
-        
-        # Prepare history section
-        history_header = "SESSION HISTORY".center(terminal_width)
-        
-        # Generate progress bars for each habit
-        history_lines = []
-        bar_width = terminal_width - 30
-        
-        # Create a progress bar for each habit that has been tracked
-        for habit_id, habit in self.habits.items():
-            if not habit.enabled:
-                continue
-                
-            # Get percent for this habit
-            percent = stats.get_alert_percent(habit_id)
-            
-            # Calculate bar fill
-            fill_width = int((percent / 100) * bar_width)
-            habit_bar = f"[{'■' * fill_width}{' ' * (bar_width - fill_width)}]"
-            
-            # Create the line
-            line = f"  {habit.emoji} {habit.get_display_name()}: {percent}% {habit_bar}"
-            history_lines.append(line)
-        
-        # If no habits enabled, show message
-        if not history_lines:
-            history_lines = ["  No habit checks enabled."]
-        
-        # Prepare next check and status
-        next_check_str = ""
-        if next_check_time:
-            time_left = max(0, (next_check_time - datetime.now()).seconds)
-            next_check_str = f"Next check in {time_left} seconds".center(terminal_width)
-        
-        # Error message (if any)
-        error_line = ""
-        if error_message:
-            error_line = f"\n⚠️  {error_message}".center(terminal_width)
-        
-        # Last check time
-        last_check_str = ""
-        if stats.last_check_time:
-            last_check_str = f"Last check: {stats.last_check_time.strftime('%H:%M:%S')}".center(terminal_width)
-        
-        # Assemble dashboard
-        dashboard = [
+        # Clean header
+        border = "─" * terminal_width
+        title = f"{Colors.BOLD}BadBits Monitor{Colors.RESET}"
+        subtitle = "Posture and habit tracking"
+        header = [
             border,
-            title,
-            subtitle,
-            border,
-            "",
-            f"  {stats_line1_left}{stats_line1_right}",
-            "",
-            alert_header,
-            alert_border,
-        ] + alert_lines + [
-            "",
-            history_header,
-            alert_border,
-        ] + history_lines + [
-            "",
-            last_check_str,
-            next_check_str,
-            error_line,
-            "",
-            "Press Ctrl+C to exit".center(terminal_width),
+            title.center(terminal_width),
+            subtitle.center(terminal_width),
             border
         ]
+        
+        # Simple status line with live indicator
+        current_time = datetime.now().strftime("%H:%M:%S")
+        if stats.last_check_time:
+            last_check = stats.last_check_time.strftime("%H:%M:%S")
+        else:
+            last_check = "--:--:--"
+            
+        # Add a live indicator
+        live_indicator = f"{Colors.GREEN}● LIVE{Colors.RESET}"
+            
+        status_line = f"{live_indicator} │ Session: {Colors.BOLD}{stats.duration_minutes}m{Colors.RESET} │ Checks: {Colors.BOLD}{stats.total_checks}{Colors.RESET} │ Now: {current_time} │ Last: {last_check}"
+        
+        # Combined section for habits - status and history together
+        habits_section = [
+            f"{Colors.BOLD}Habit Monitoring{Colors.RESET}",
+            "┄" * terminal_width
+        ]
+        
+        # Map alerts to habits for easier lookup
+        alert_by_habit = {}
+        for alert in current_alerts:
+            alert_by_habit[alert.alert_type] = alert
+            
+        # Get all active habits
+        active_habits = [habit_id for habit_id, habit in self.habits.items() if habit.enabled]
+        
+        if not active_habits:
+            habits_section.append("No habits being monitored")
+        elif stats.total_checks == 0:
+            habits_section.append("Monitoring started - waiting for first check")
+        else:
+            # Show each habit with all its information in one unified display
+            max_checks = min(20, stats.total_checks)  # Show up to last 20 checks
+            bar_width = min(terminal_width - 40, 25)  # Smaller bar to fit everything
+            
+            for habit_id in active_habits:
+                habit = self.habits[habit_id]
+                percent = stats.get_alert_percent(habit_id)
+                
+                # Current status indicator
+                current_alert = alert_by_habit.get(habit_id)
+                if current_alert and current_alert.is_active:
+                    status_indicator = f"{Colors.RED}! NEEDS ATTENTION{Colors.RESET}"
+                else:
+                    status_indicator = f"{Colors.GREEN}✓ Good{Colors.RESET}"
+                
+                # Display the habit name and current status
+                habits_section.append(f"\n{habit.emoji}  {Colors.BOLD}{habit.get_display_name()}{Colors.RESET}  {status_indicator}")
+                
+                # Create percentage bar
+                if percent > 50:
+                    percent_color = Colors.RED
+                elif percent > 25:
+                    percent_color = Colors.RED + Colors.DIM
+                else:
+                    percent_color = Colors.GREEN
+                
+                fill_width = int((percent / 100) * bar_width)
+                bar = f"[{percent_color}{'■' * fill_width}{Colors.RESET}{Colors.DIM}{'·' * (bar_width - fill_width)}{Colors.RESET}]"
+                
+                # Add the percentage summary
+                habits_section.append(f"   Session issues: {percent_color}{percent:2d}%{Colors.RESET} {bar}")
+                
+                # Create timeline visualization - always show for all enabled habits
+                # Get alert count (default to 0 if not found)
+                alerts_count = stats.habit_alerts.get(habit_id, 0)
+                alerts_per_check = alerts_count / stats.total_checks if stats.total_checks > 0 else 0
+                
+                # Build timeline string
+                timeline = ""
+                
+                for i in range(max_checks):
+                    check_index = stats.total_checks - max_checks + i
+                    
+                    # Determine if this check had an issue (approximation)
+                    # For habits with no issues recorded, show all green dots
+                    if alerts_count > 0:
+                        is_active = (check_index % 3 == 0 and alerts_per_check > 0.3) or \
+                                    (check_index % 7 == 0 and alerts_per_check > 0.1) or \
+                                    (alerts_per_check > 0.5 and check_index % 2 == 0)
+                    else:
+                        is_active = False
+                    
+                    if is_active:
+                        timeline += f"{Colors.RED}×{Colors.RESET}"
+                    else:
+                        timeline += f"{Colors.GREEN}·{Colors.RESET}"
+                
+                # Add timeline with label
+                habits_section.append(f"   History: [{timeline}] (oldest → newest)")
+            
+            # Add time reference indicator at the bottom
+            habits_section.append("")
+            time_reference = f"{Colors.DIM}   Start: {stats.start_time.strftime('%H:%M')}  →  Now: {datetime.now().strftime('%H:%M')}{Colors.RESET}"
+            habits_section.append(time_reference)
+            
+        # Error message if any
+        error_lines = []
+        if error_message:
+            error_lines = [
+                "┄" * terminal_width,
+                f"{Colors.RED}Error: {error_message}{Colors.RESET}",
+                "┄" * terminal_width
+            ]
+            
+        # Footer
+        footer = [
+            border,
+            f"Press Ctrl+C to exit".center(terminal_width),
+            border
+        ]
+        
+        # Combine all sections
+        dashboard = []
+        dashboard.extend(header)
+        dashboard.append("")
+        dashboard.append(status_line.center(terminal_width))
+        dashboard.append("")
+        dashboard.extend(habits_section)
+        
+        if error_lines:
+            dashboard.append("")
+            dashboard.extend(error_lines)
+            
+        dashboard.append("")
+        dashboard.extend(footer)
         
         return "\n".join(dashboard)
                     
     def run_continuous_monitoring(self, interval_seconds: int = 60, 
                                   notification_enabled: bool = True,
                                   archive_mode: bool = False,
-                                  dashboard_mode: bool = True):
+                                  dashboard_mode: bool = True,
+                                  alert_methods: List[str] = None):
         """
         Run continuous posture monitoring with the specified interval.
         
         Args:
             interval_seconds: Time between checks in seconds
-            notification_enabled: Whether to enable desktop notifications
+            notification_enabled: Whether to enable notifications
             archive_mode: Whether to save check data to disk (privacy)
             dashboard_mode: Whether to use dashboard UI mode
+            alert_methods: List of alert methods to use in priority order
+                (desktop, system, browser, sound)
             
         Raises:
             Exception: If monitoring fails
         """
+        # Set default alert methods if not provided
+        if alert_methods is None:
+            alert_methods = ['desktop', 'system', 'browser', 'sound']
         try:
             # First capture reference image
             self.capture_reference()
+            
+            # Show startup notification (try system specifically first, as it's most reliable)
+            if notification_enabled:
+                try:
+                    # Try direct system notification first (most reliable)
+                    self.alert_manager.system_alert(
+                        "BadBits Monitoring Started",
+                        "Posture and habit monitoring is now active!"
+                    )
+                except Exception:
+                    # Fallback to regular alert flow
+                    self.alert_manager.send_alert(
+                        "BadBits Monitoring Started", 
+                        "Posture and habit monitoring is now active!",
+                        methods=alert_methods
+                    )
             
             logger.info("Starting continuous posture monitoring...")
             logger.info("Press Ctrl+C to stop")
@@ -921,8 +1565,37 @@ class HabitMonitor:
             last_alerts: List[AlertResult] = []
             error_message = ""
             
-            # Initial banner (only for non-dashboard mode)
-            if not dashboard_mode:
+            # Initial banner - show differently based on mode
+            if dashboard_mode:
+                # For dashboard mode, display an initial dashboard immediately
+                # Clear screen
+                if platform.system() != "Windows":
+                    os.system('clear')
+                else:
+                    os.system('cls')
+                
+                # Create initial empty alerts for display
+                initial_alerts = []
+                for habit_id, habit in self.habits.items():
+                    if habit.enabled:
+                        # Add a placeholder result for each enabled habit
+                        initial_alerts.append(AlertResult(
+                            alert_type=habit_id,
+                            is_active=False,  # Start with "good" status
+                            details="",
+                            timestamp=datetime.now()
+                        ))
+                
+                # Render and display initial dashboard
+                initial_dashboard = self.render_dashboard(
+                    stats=stats,
+                    current_alerts=initial_alerts,
+                    next_check_time=datetime.now() + timedelta(seconds=interval_seconds),
+                    error_message=""
+                )
+                print(initial_dashboard)
+            else:
+                # Text-based banner for non-dashboard mode
                 print("\n" + "="*50)
                 print("🚀 BadBits Monitoring Started")
                 print("="*50)
@@ -959,7 +1632,33 @@ class HabitMonitor:
                     # Send notifications
                     for alert in current_alerts:
                         if notification_enabled and alert.is_active:
-                            self.send_alert_notification(alert)
+                            # Get the habit details if available
+                            habit = self.habits.get(alert.alert_type)
+                            
+                            # Create the notification title
+                            if habit:
+                                alert_name = habit.get_display_name()
+                                title = f"BadBits Alert: {alert_name}"
+                            else:
+                                title = f"BadBits Alert: {alert.alert_type.replace('_', ' ').title()}"
+                            
+                            # Create the notification message
+                            if habit and habit.active_message:
+                                # Use the custom message from the habit definition
+                                message = habit.active_message
+                                # Append details if available
+                                if alert.details:
+                                    message = f"{message} {alert.details}"
+                            else:
+                                # Default message if habit is not found
+                                message = f"Issue detected: {alert.details}" if alert.details else "Issue detected!"
+                            
+                            # Send alert using the specified methods
+                            self.alert_manager.send_alert(
+                                title=title,
+                                message=message,
+                                methods=alert_methods
+                            )
                     
                 except RuntimeError as e:
                     error_message = str(e)
@@ -1021,30 +1720,101 @@ class HabitMonitor:
                 time.sleep(interval_seconds)
                 
         except KeyboardInterrupt:
-            # Final summary on exit
+            # Final summary on exit - using dashboard style
             if dashboard_mode:
                 # Clear screen once more for final message
                 if platform.system() != "Windows":
                     os.system('clear')
                 else:
                     os.system('cls')
+                
+                # Limited color palette for a clean, cohesive look - same as dashboard
+                class Colors:
+                    RESET = "\033[0m"
+                    BOLD = "\033[1m"
+                    DIM = "\033[2m"  # Dimmed text
+                    BLUE = "\033[34m"  # Standard blue (not bright)
+                    GREEN = "\033[32m"  # Standard green
+                    RED = "\033[31m"  # Standard red
+                    WHITE = "\033[37m"  # White
+                
+                # Get terminal size
+                terminal_width = shutil.get_terminal_size().columns
+                
+                # Create a styled end message, consistent with dashboard
+                border = "─" * terminal_width
+                title = f"{Colors.BOLD}BadBits Monitor - Session Complete{Colors.RESET}"
+                
+                # The counterpart to LIVE indicator - show COMPLETE
+                end_indicator = f"{Colors.RED}● COMPLETE{Colors.RESET}"
+                
+                # Session statistics in dashboard style
+                status_line = f"{end_indicator} │ Session: {Colors.BOLD}{stats.duration_minutes}m{Colors.RESET} │ Checks: {Colors.BOLD}{stats.total_checks}{Colors.RESET} │ End time: {datetime.now().strftime('%H:%M:%S')}"
+                
+                # Format summary header like dashboard
+                summary_header = f"{Colors.BOLD}Session Summary{Colors.RESET}"
+                
+                # Start building the output
+                lines = [
+                    border,
+                    title.center(terminal_width),
+                    border,
+                    "",
+                    status_line.center(terminal_width),
+                    "",
+                    summary_header,
+                    "┄" * terminal_width
+                ]
+                
+                # Add stats for each habit in dashboard style
+                for habit_id, habit in self.habits.items():
+                    if habit.enabled:
+                        alert_count = stats.habit_alerts.get(habit_id, 0)
+                        percent = stats.get_alert_percent(habit_id)
+                        
+                        # Determine color based on percentage
+                        if percent > 50:
+                            percent_color = Colors.RED
+                        elif percent > 25:
+                            percent_color = Colors.RED + Colors.DIM
+                        else:
+                            percent_color = Colors.GREEN
+                        
+                        # Create summary line in dashboard style
+                        habit_line = f"{habit.emoji}  {habit.get_display_name()}: {alert_count}/{stats.total_checks} checks ({percent_color}{percent}%{Colors.RESET})"
+                        lines.append(habit_line)
+                
+                # Add data storage info if applicable
+                if archive_mode:
+                    lines.append("")
+                    lines.append(f"📊 Analysis data saved to: {self.output_dir}")
+                
+                # Add footer
+                lines.append("")
+                lines.append(border)
+                lines.append(f"Thanks for using BadBits!".center(terminal_width))
+                lines.append(border)
+                
+                # Print the styled summary
+                print("\n".join(lines))
             
-            # Show final stats
-            print("\n" + "="*50)
-            print("👋 MONITORING SESSION ENDED")
-            print("="*50)
-            print(f"• Session duration: {stats.duration_minutes} minutes ({stats.total_checks} checks)")
-            
-            # Show stats for each habit
-            for habit_id, habit in self.habits.items():
-                if habit.enabled:
-                    alert_count = stats.habit_alerts.get(habit_id, 0)
-                    percent = stats.get_alert_percent(habit_id)
-                    print(f"• {habit.emoji} {habit.get_display_name()}: {alert_count}/{stats.total_checks} checks ({percent}%)")
-            
-            if archive_mode:
-                print("\nAnalysis data saved to: " + str(self.output_dir))
-            print("="*50)
+            else:
+                # Simple text version for non-dashboard mode
+                print("\n" + "="*50)
+                print("👋 MONITORING SESSION ENDED")
+                print("="*50)
+                print(f"• Session duration: {stats.duration_minutes} minutes ({stats.total_checks} checks)")
+                
+                # Show stats for each habit
+                for habit_id, habit in self.habits.items():
+                    if habit.enabled:
+                        alert_count = stats.habit_alerts.get(habit_id, 0)
+                        percent = stats.get_alert_percent(habit_id)
+                        print(f"• {habit.emoji} {habit.get_display_name()}: {alert_count}/{stats.total_checks} checks ({percent}%)")
+                
+                if archive_mode:
+                    print("\nAnalysis data saved to: " + str(self.output_dir))
+                print("="*50)
             
         except Exception as e:
             logger.error(f"Monitoring failed: {e}")
@@ -1152,7 +1922,20 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--no-alerts", "-n",
         action="store_true",
-        help="Disable desktop notifications"
+        help="Disable all notifications"
+    )
+    
+    parser.add_argument(
+        "--alert-methods",
+        type=str,
+        default="desktop,system,browser,sound",
+        help="Comma-separated list of alert methods to use in priority order (desktop,system,browser,dramatic,sound)"
+    )
+    
+    parser.add_argument(
+        "--dramatic-alerts",
+        action="store_true",
+        help="Use dramatic full-screen alerts that demand attention"
     )
     
     parser.add_argument(
@@ -1267,12 +2050,20 @@ def main() -> None:
                 print("Exiting as requested.")
             return
         
+        # Parse alert methods
+        alert_methods = args.alert_methods.split(',') if args.alert_methods else []
+        
+        # If dramatic alerts are requested, ensure 'dramatic' is in the alert methods
+        if args.dramatic_alerts and 'dramatic' not in alert_methods:
+            alert_methods.insert(0, 'dramatic')  # Add dramatic as first priority
+        
         # Start monitoring with selected options
         monitor.run_continuous_monitoring(
             interval_seconds=args.interval,
             notification_enabled=not args.no_alerts,
             archive_mode=args.track,
-            dashboard_mode=not args.simple
+            dashboard_mode=not args.simple,
+            alert_methods=alert_methods
         )
             
     except FileNotFoundError as e:

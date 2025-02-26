@@ -24,6 +24,7 @@ dependencies = [
     "requests>=2.31.0",
     "tqdm>=4.66.1",
     "plyer>=2.1.0",
+    "pyobjus>=1.2.0; sys_platform == 'darwin'",  # macOS notification dependency
 ]
 
 [project.optional-dependencies]
